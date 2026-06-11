@@ -84,8 +84,7 @@ class nnInteractiveWrapper(ModelWrapper):
             use_torch_compile=False,
             verbose=False,
             torch_n_threads=config.n_cpu_threads,
-            do_autozoom=True,
-            use_pinned_memory=True
+            do_autozoom=True
         )
         
         # Set it as the default session factory - to allow -k flag
