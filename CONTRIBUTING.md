@@ -73,11 +73,14 @@ sphinx-build -b html docs docs/_build/html
 2. Make your change, with tests where the behavior is testable.
 3. Push to your fork and open a pull request against `main`.
 
-**Commit messages** follow the same convention as ITK-SNAP: prefix the subject with `BUG:`,
-`ENH:`, `DOC:`, `PERF:`, `STYLE:`, or `WIP:`, keep it under 72 characters, write it in the
-imperative mood, and use the body to explain what and why.
+**Commit messages** — a recommendation, not a requirement. The maintainers are trying out
+the same convention as ITK-SNAP first: prefix the subject with `BUG:`, `ENH:`, `DOC:`,
+`PERF:`, `STYLE:`, or `WIP:`, keep it under 72 characters, write it in the imperative mood,
+and use the body to explain what and why. A message that clearly explains the change matters
+much more than one that matches the format.
 
-**Things to check before you open a pull request:**
+**Things that make a pull request easy to review.** These are suggestions; none is a
+precondition for opening one, and a maintainer can help with any of them during review.
 
 - The server still starts and `GET /status` responds.
 - `pytest` passes.
