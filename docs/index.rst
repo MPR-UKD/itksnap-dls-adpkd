@@ -12,4 +12,5 @@ This Python package interfaces with `ITK-SNAP <http://itksnap.org/>`_ to allow f
    :caption: Contents:
 
    quick_start.md
+   developer.md
 
