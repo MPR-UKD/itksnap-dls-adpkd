@@ -99,10 +99,16 @@ async def start_session():
 def read_sitk_image(contents, metadata):
     print(f'arr_gz size: {len(contents)}, first byte: {contents[0]:d}, second byte: {contents[1]:d}')
     contents_raw = gzip.decompress(contents)
-    array = np.frombuffer(contents_raw, dtype=np.float32)
+    metadata_dict = json.loads(metadata)
+
+    # Decode with the pixel type sent by the client (float32 unless stated otherwise)
+    try:
+        dtype = np.dtype(metadata_dict.get('component_type', 'float32'))
+    except TypeError:
+        dtype = np.dtype(np.float32)
+    array = np.frombuffer(contents_raw, dtype=dtype)
 
     # Reshape the array
-    metadata_dict = json.loads(metadata)
     if metadata_dict['components_per_pixel'] != 1:
         dim = metadata_dict['dimensions'][::-1] + [metadata_dict['components_per_pixel']]
         array = array.reshape(dim)
@@ -111,9 +117,18 @@ def read_sitk_image(contents, metadata):
         dim = metadata_dict['dimensions'][::-1]
         array = array.reshape(dim)
         sitk_image = sitk.GetImageFromArray(array, isVector=False)
-    
-    # Load the NIFTI image
-    print(f'Received image of shape {sitk_image.GetSize()} with {sitk_image.GetNumberOfComponentsPerPixel()} components per pixel')
+
+    # Apply the physical geometry sent by ITK-SNAP (direction is row-major, as SimpleITK expects).
+    # Older clients only send dimensions, in which case the SimpleITK defaults are kept.
+    if 'spacing' in metadata_dict:
+        sitk_image.SetSpacing(metadata_dict['spacing'])
+    if 'origin' in metadata_dict:
+        sitk_image.SetOrigin(metadata_dict['origin'])
+    if 'direction' in metadata_dict:
+        sitk_image.SetDirection(metadata_dict['direction'])
+
+    print(f'Received image of shape {sitk_image.GetSize()} with {sitk_image.GetNumberOfComponentsPerPixel()} components per pixel, '
+          f'spacing {sitk_image.GetSpacing()}, direction {sitk_image.GetDirection()}')
     
     return sitk_image
     
