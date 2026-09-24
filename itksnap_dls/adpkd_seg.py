@@ -22,11 +22,14 @@ async def adpkd_segmentation(input_image: sitk.Image) -> sitk.Image:
         UInt8 label image with the same geometry as ``input_image``.
 
     Raises:
-        RuntimeError: If the job fails, times out or returns a mismatched result.
+        RuntimeError: If the service is unreachable, or the job fails, times out
+            or returns a mismatched result.
         httpx.HTTPError: If the service cannot be reached.
     """
     settings = get_plugin_settings()
     client = AdpkdClient(settings.adpkd_url)
+    if not await client.health():
+        raise RuntimeError(f"adpkd-net service not reachable at {settings.adpkd_url}")
 
     # 1. Write the image into the directory shared with the container
     run_id = str(uuid.uuid4())[:8]

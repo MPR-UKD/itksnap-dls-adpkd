@@ -138,8 +138,6 @@ async def upload_raw(session_id: str, file: UploadFile = File(...), metadata: st
     
     # Get the current segmentator session
     seg = session_manager.get_session(session_id)
-    print(seg)
-    print(seg.__dir__)
     if seg is None:
        return {"error": "Invalid session"}
 
@@ -278,6 +276,10 @@ def handle_reset_interactions(session_id: str):
     
 @app.get("/v2/end_session/{session_id}")
 @app.get("/end_session/{session_id}")
-def end_session(session_id: str):
+async def end_session(session_id: str):
+    # Let wrappers with background work (ADPKD) stop it; runs on the event loop thread
+    seg = session_manager.get_session(session_id)
+    if hasattr(seg, "close"):
+        seg.close()
     success = session_manager.delete_session(session_id)
     return {"message": "Session ended" if success else "Invalid session"}

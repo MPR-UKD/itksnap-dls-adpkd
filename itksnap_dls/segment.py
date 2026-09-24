@@ -342,6 +342,13 @@ class ADPKDWrapper(ModelWrapper):
         print(f"ADPKD lasso interaction: foreground={include_interaction}")
         await self._wait_for_result()
 
+    def close(self):
+        # Stop waiting for the job when the session ends. The container job itself
+        # runs to completion; the adpkd-net API has no cancel endpoint.
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+
     def reset_interactions(self):
         # Interactions do not modify the result, so the cached segmentation is
         # kept instead of re-running the full job.
