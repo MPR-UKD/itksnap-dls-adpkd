@@ -12,7 +12,9 @@ dependencies = [
     'transformers',
     'ngrok',
     'torch<=2.8.0',
-    'torchaudio<=2.8.0'
+    'torchaudio<=2.8.0',
+    "httpx>=0.28.1",
+    "pydantic-settings>=2.15.0",
 ]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,3 +36,16 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["itksnap_dls" ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-mock>=3.15.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: isolated tests for individual functions/classes, no external dependencies",
+    "integration: end-to-end tests through the FastAPI app",
+]
