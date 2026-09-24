@@ -2,7 +2,9 @@ from typing import Callable
 from fastapi import FastAPI, UploadFile, File, Request, Response, HTTPException, Form, Query
 from fastapi.routing import APIRoute
 from fastapi.exceptions import RequestValidationError
+from starlette.concurrency import run_in_threadpool
 from importlib.metadata import version
+import inspect
 from .session import session_manager, PREPARED_SESSION_ID
 from .segment import get_model_listing, instantiate_model_wrapper, nnInteractiveWrapper
 import SimpleITK as sitk
@@ -44,6 +46,13 @@ async def create_segment_session(repo_id: str):
     logging.getLogger("uvicorn.info").info(
         f'New segmentation session initialized in {(t1-t0):0.2f} seconds')
     return seg    
+
+# Call a model wrapper method that may be sync (nnInteractive, SAM2) or async (ADPKD).
+# Sync methods run in the threadpool so they do not block the event loop.
+async def call_model(fn, *args, **kwargs):
+    if inspect.iscoroutinefunction(fn):
+        return await fn(*args, **kwargs)
+    return await run_in_threadpool(fn, *args, **kwargs)
 
 # Create a lifestyle function
 @asynccontextmanager
@@ -136,8 +145,8 @@ async def upload_raw(session_id: str, file: UploadFile = File(...), metadata: st
 
 
 @app.get("/v2/process_point_interaction/{session_id}")
-def handle_point_interaction(
-    session_id: str, 
+async def handle_point_interaction(
+    session_id: str,
     point: list[int] = Query(...), 
     foreground: bool = False):
     
@@ -150,11 +159,11 @@ def handle_point_interaction(
    
     # Handle the interaction
     t0 = time.perf_counter()
-    seg.add_point_interaction(point, include_interaction=foreground)
+    await call_model(seg.add_point_interaction, point, include_interaction=foreground)
     t1 = time.perf_counter()
-    
+
     # Base64 encode the segmentation result
-    arr = np.where(sitk.GetArrayFromImage(seg.get_result()) > 0, 1, 0).astype(np.int8)
+    arr = np.where(sitk.GetArrayFromImage(await call_model(seg.get_result)) > 0, 1, 0).astype(np.int8)
     arr_gz = gzip.compress(arr.tobytes())
     print(f'arr_gz size: {len(arr_gz)}, first byte: {arr_gz[0]:d}, second byte: {arr_gz[1]:d}')
     arr_b64 = base64.b64encode(arr_gz) #.decode("utf-8")
@@ -167,8 +176,8 @@ def handle_point_interaction(
 
 
 @app.get("/process_point_interaction/{session_id}")
-def handle_point_interaction_legacy(session_id: str, x: int, y: int, z: int, foreground: bool = False):
-    return handle_point_interaction(session_id, [x, y, z], foreground)
+async def handle_point_interaction_legacy(session_id: str, x: int, y: int, z: int, foreground: bool = False):
+    return await handle_point_interaction(session_id, [x, y, z], foreground)
     
 
 @app.post("/process_scribble_interaction/{session_id}")
@@ -188,11 +197,11 @@ async def handle_scribble_interaction(session_id: str,
 
     # Handle the interaction
     t0 = time.perf_counter()
-    seg.add_scribble_interaction(sitk_image, include_interaction=foreground)
+    await call_model(seg.add_scribble_interaction, sitk_image, include_interaction=foreground)
     t1 = time.perf_counter()
-    
+
     # Base64 encode the segmentation result
-    arr = np.where(sitk.GetArrayFromImage(seg.get_result()) > 0, 1, 0).astype(np.int8)
+    arr = np.where(sitk.GetArrayFromImage(await call_model(seg.get_result)) > 0, 1, 0).astype(np.int8)
     arr_gz = gzip.compress(arr.tobytes())
     print(f'arr_gz size: {len(arr_gz)}, first byte: {arr_gz[0]:d}, second byte: {arr_gz[1]:d}')
     arr_b64 = base64.b64encode(arr_gz) #.decode("utf-8")
@@ -220,11 +229,11 @@ async def handle_lasso_interaction(session_id: str,
 
     # Handle the interaction
     t0 = time.perf_counter()
-    seg.add_lasso_interaction(sitk_image, include_interaction=foreground)
+    await call_model(seg.add_lasso_interaction, sitk_image, include_interaction=foreground)
     t1 = time.perf_counter()
-    
+
     # Base64 encode the segmentation result
-    arr = np.where(sitk.GetArrayFromImage(seg.get_result()) > 0, 1, 0).astype(np.int8)
+    arr = np.where(sitk.GetArrayFromImage(await call_model(seg.get_result)) > 0, 1, 0).astype(np.int8)
     arr_gz = gzip.compress(arr.tobytes())
     print(f'arr_gz size: {len(arr_gz)}, first byte: {arr_gz[0]:d}, second byte: {arr_gz[1]:d}')
     arr_b64 = base64.b64encode(arr_gz) #.decode("utf-8")
