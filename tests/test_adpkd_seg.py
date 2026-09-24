@@ -143,6 +143,18 @@ class TestAdpkdSegmentationErrors:
         with pytest.raises(RuntimeError, match="does not match"):
             await adpkd_segmentation(sample_image)
 
+    async def test_unreachable_service_raises(
+        self, fake_client, sample_image, adpkd_settings
+    ):
+        """An unhealthy service raises before any input is written or submitted."""
+        fake_client.healthy = False
+
+        with pytest.raises(RuntimeError, match="not reachable at http://adpkd-test:9000"):
+            await adpkd_segmentation(sample_image)
+
+        assert fake_client.submitted == []
+        assert not adpkd_settings.adpkd_shared_input_dir.exists()
+
     async def test_http_error_propagates(self, fake_client, sample_image, mocker):
         """Connection errors from the service are not swallowed."""
         mocker.patch.object(

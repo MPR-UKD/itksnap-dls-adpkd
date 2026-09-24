@@ -112,6 +112,49 @@ class TestADPKDWrapperSetImage:
 
 
 @pytest.mark.unit
+class TestADPKDWrapperClose:
+    """Tests for stopping the background job when a session ends."""
+
+    def test_close_without_image_is_noop(self):
+        """close() on a wrapper that never received an image does nothing."""
+        ADPKDWrapper().close()
+
+    @pytest.mark.anyio
+    async def test_close_cancels_running_job(self, mocker):
+        """close() cancels a job that is still running."""
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def fake_segmentation(image):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        mocker.patch("itksnap_dls.segment.adpkd_segmentation", fake_segmentation)
+        wrapper = ADPKDWrapper()
+        wrapper.set_image(make_image())
+        await started.wait()
+
+        wrapper.close()
+        await asyncio.sleep(0)
+
+        assert cancelled.is_set()
+
+    @pytest.mark.anyio
+    async def test_get_result_after_close_raises(self, mock_segmentation):
+        """After close(), the wrapper behaves as if no image was uploaded."""
+        wrapper = ADPKDWrapper()
+        wrapper.set_image(make_image())
+        wrapper.close()
+
+        with pytest.raises(RuntimeError, match="No image"):
+            await wrapper.get_result()
+
+
+@pytest.mark.unit
 @pytest.mark.anyio
 class TestADPKDWrapperResult:
     """Tests for interactions and result retrieval."""

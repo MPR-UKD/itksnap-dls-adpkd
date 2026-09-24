@@ -10,7 +10,10 @@ from itksnap_dls.server import call_model, read_sitk_image
 from itksnap_dls.session import session_manager
 
 from .test_toolbox import (
+    CORONAL_DIRECTION,
+    IMAGE_ORIGIN,
     IMAGE_SHAPE_ZYX,
+    IMAGE_SPACING,
     decode_mask,
     encode_upload,
     make_label_array,
@@ -53,10 +56,13 @@ class SyncFakeWrapper:
         return sitk.GetImageFromArray(labels)
 
 
-def start_adpkd_session(api_client) -> str:
-    """Start an ADPKD session and upload the sample image; return the session id."""
+def start_adpkd_session(api_client, **geometry) -> str:
+    """Start an ADPKD session and upload the sample image; return the session id.
+
+    Keyword arguments (spacing, origin, direction) are sent as upload metadata.
+    """
     session_id = api_client.get("/v2/start_session/ADPKD").json()["session_id"]
-    payload, metadata = encode_upload(np.ones(IMAGE_SHAPE_ZYX))
+    payload, metadata = encode_upload(np.ones(IMAGE_SHAPE_ZYX), **geometry)
     response = api_client.post(
         f"/v2/upload_raw/{session_id}",
         files={"file": ("image", payload)},
@@ -107,6 +113,79 @@ class TestReadSitkImage:
 
 
 @pytest.mark.unit
+class TestReadSitkImageGeometry:
+    """Tests for applying the geometry and pixel type sent by ITK-SNAP."""
+
+    def test_geometry_is_applied(self):
+        """Spacing, origin and a coronal direction from the metadata are applied."""
+        payload, metadata = encode_upload(
+            np.zeros(IMAGE_SHAPE_ZYX),
+            spacing=IMAGE_SPACING,
+            origin=IMAGE_ORIGIN,
+            direction=CORONAL_DIRECTION,
+        )
+
+        image = read_sitk_image(payload, metadata)
+
+        np.testing.assert_allclose(image.GetSpacing(), IMAGE_SPACING)
+        np.testing.assert_allclose(image.GetOrigin(), IMAGE_ORIGIN)
+        np.testing.assert_allclose(image.GetDirection(), CORONAL_DIRECTION)
+
+    def test_missing_geometry_keeps_defaults(self):
+        """Metadata without geometry (older clients) keeps the SimpleITK defaults."""
+        payload, metadata = encode_upload(np.zeros(IMAGE_SHAPE_ZYX))
+
+        image = read_sitk_image(payload, metadata)
+
+        assert image.GetSpacing() == (1.0, 1.0, 1.0)
+        assert image.GetOrigin() == (0.0, 0.0, 0.0)
+        assert image.GetDirection() == (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+
+    def test_2d_vector_geometry(self):
+        """A 2D RGB slice (SAM2 case) accepts 2D spacing, origin and a 2x2 direction."""
+        array = np.random.default_rng(0).random((5, 6, 3))
+        payload, metadata = encode_upload(
+            array,
+            components_per_pixel=3,
+            spacing=(0.5, 0.7),
+            origin=(1.0, 2.0),
+            direction=(0.0, 1.0, 1.0, 0.0),
+        )
+
+        image = read_sitk_image(payload, metadata)
+
+        np.testing.assert_allclose(image.GetSpacing(), (0.5, 0.7))
+        np.testing.assert_allclose(image.GetOrigin(), (1.0, 2.0))
+        np.testing.assert_allclose(image.GetDirection(), (0.0, 1.0, 1.0, 0.0))
+
+    @pytest.mark.parametrize(
+        ("dtype", "component_type"),
+        [(np.uint8, "uint8"), (np.int16, "int16"), (np.float64, "float64")],
+    )
+    def test_component_type_is_decoded(self, dtype, component_type):
+        """Pixel data is decoded with the component type stated in the metadata."""
+        array = np.arange(np.prod(IMAGE_SHAPE_ZYX)).reshape(IMAGE_SHAPE_ZYX) % 100
+        payload, metadata = encode_upload(
+            array, dtype=dtype, component_type=component_type
+        )
+
+        image = read_sitk_image(payload, metadata)
+
+        np.testing.assert_array_equal(sitk.GetArrayFromImage(image), array)
+
+    @pytest.mark.parametrize("component_type", [None, "unknown"], ids=["missing", "unknown"])
+    def test_component_type_falls_back_to_float32(self, component_type):
+        """A missing or unknown component type is decoded as float32."""
+        array = np.full(IMAGE_SHAPE_ZYX, 2.5)
+        payload, metadata = encode_upload(array, component_type=component_type)
+
+        image = read_sitk_image(payload, metadata)
+
+        assert image.GetPixelID() == sitk.sitkFloat32
+        np.testing.assert_array_equal(sitk.GetArrayFromImage(image), array)
+
+
+@pytest.mark.unit
 @pytest.mark.anyio
 class TestCallModel:
     """Tests for dispatching to sync and async wrapper methods."""
@@ -146,10 +225,6 @@ class TestSessionManager:
         finally:
             session_manager.sessions.pop("sid-1", None)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="create_session's default id is evaluated once at import time",
-    )
     def test_sessions_get_unique_ids(self):
         """Two sessions without an explicit id get different ids."""
         first = session_manager.create_session("a")
@@ -164,6 +239,34 @@ class TestSessionManager:
 @pytest.mark.integration
 class TestAdpkdApi:
     """End-to-end ADPKD flow through the HTTP API with a fake container."""
+
+    def test_upload_geometry_reaches_container(self, api_client, fake_client):
+        """The NIfTI handed to adpkd-net carries the geometry sent by ITK-SNAP.
+
+        adpkd-net chooses its axial or coronal model from this orientation.
+        """
+        session_id = start_adpkd_session(
+            api_client,
+            spacing=IMAGE_SPACING,
+            origin=IMAGE_ORIGIN,
+            direction=CORONAL_DIRECTION,
+        )
+
+        response = api_client.get(
+            f"/v2/process_point_interaction/{session_id}",
+            params={"point": [0, 0, 0], "foreground": True},
+        )
+
+        submitted = fake_client.submitted[0]
+        orientation = sitk.DICOMOrientImageFilter.GetOrientationFromDirectionCosines(
+            submitted["input_direction"]
+        )
+        assert orientation == "LIP", f"Expected coronal LIP, got {orientation}"
+        np.testing.assert_allclose(submitted["input_spacing"], IMAGE_SPACING, rtol=1e-6)
+        np.testing.assert_allclose(submitted["input_origin"], IMAGE_ORIGIN, rtol=1e-6)
+        np.testing.assert_array_equal(
+            decode_mask(response.json()["result"]), EXPECTED_MASK
+        )
 
     def test_models_endpoint_lists_adpkd(self, api_client):
         """/v2/models includes the ADPKD model."""
@@ -277,6 +380,26 @@ class TestAdpkdApi:
 
         assert response.status_code == 500
 
+    def test_start_session_returns_unique_ids(self, api_client):
+        """Each started session gets its own id."""
+        first = api_client.get("/v2/start_session/ADPKD").json()["session_id"]
+        second = api_client.get("/v2/start_session/ADPKD").json()["session_id"]
+
+        assert first != second
+
+    def test_end_session_cancels_running_job(self, api_client, fake_client):
+        """Ending a session stops waiting for a job that is still running."""
+        fake_client.statuses = ["running"]
+        session_id = start_adpkd_session(api_client)
+        task = session_manager.get_session(session_id)._task
+        api_client.get("/v2/models")  # let the job get submitted
+
+        api_client.get(f"/v2/end_session/{session_id}")
+        api_client.get("/v2/models")  # let the cancellation be processed
+
+        assert task.cancelled()
+        assert len(fake_client.submitted) == 1
+
     def test_end_session(self, api_client, fake_client):
         """Ending a session removes it; ending it again reports it as invalid."""
         session_id = start_adpkd_session(api_client)
@@ -342,6 +465,18 @@ class TestInvalidSession:
     def test_get_endpoints(self, api_client, method, url, kwargs):
         """GET endpoints return an invalid-session error."""
         response = getattr(api_client, method)(url, **kwargs)
+        assert response.json() == {"error": "Invalid session"}
+
+    def test_upload_endpoint(self, api_client):
+        """Uploading to an unknown session returns an invalid-session error."""
+        payload, metadata = encode_upload(np.zeros(IMAGE_SHAPE_ZYX))
+
+        response = api_client.post(
+            "/v2/upload_raw/nope",
+            files={"file": ("image", payload)},
+            data={"metadata": metadata},
+        )
+
         assert response.json() == {"error": "Invalid session"}
 
     @pytest.mark.parametrize("kind", ["scribble", "lasso"])

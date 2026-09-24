@@ -13,6 +13,10 @@ IMAGE_SHAPE_ZYX = (4, 5, 6)
 IMAGE_SPACING = (0.8, 0.8, 3.0)
 IMAGE_ORIGIN = (-10.0, 20.0, 5.0)
 
+# Row-major LPS direction of a coronal acquisition: the third voxel axis (slices)
+# runs along anterior-posterior and the second along inferior-superior
+CORONAL_DIRECTION = (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.0, 0.0)
+
 
 def make_image(
     shape_zyx=IMAGE_SHAPE_ZYX, spacing=IMAGE_SPACING, origin=IMAGE_ORIGIN
@@ -41,17 +45,40 @@ def write_segmentation(path: Path, labels: np.ndarray) -> None:
     sitk.WriteImage(seg, str(path))
 
 
-def encode_upload(array: np.ndarray, components_per_pixel: int = 1):
-    """Encode an array like the ITK-SNAP client: gzipped float32 plus JSON metadata."""
-    payload = gzip.compress(array.astype(np.float32).tobytes())
+def encode_upload(
+    array: np.ndarray,
+    components_per_pixel: int = 1,
+    dtype=np.float32,
+    spacing=None,
+    origin=None,
+    direction=None,
+    component_type=None,
+):
+    """Encode an array like the ITK-SNAP client: gzipped pixels plus JSON metadata.
+
+    Geometry keys and ``component_type`` are only added when given, so the default
+    call produces the minimal metadata of older clients.
+    """
+    payload = gzip.compress(array.astype(dtype).tobytes())
     spatial_shape = array.shape if components_per_pixel == 1 else array.shape[:-1]
-    metadata = json.dumps(
+    metadata = {
+        "dimensions": list(spatial_shape[::-1]),
+        "components_per_pixel": components_per_pixel,
+    }
+    optional = {
+        "spacing": spacing,
+        "origin": origin,
+        "direction": direction,
+        "component_type": component_type,
+    }
+    metadata.update(
         {
-            "dimensions": list(spatial_shape[::-1]),
-            "components_per_pixel": components_per_pixel,
+            key: list(value) if isinstance(value, tuple) else value
+            for key, value in optional.items()
+            if value is not None
         }
     )
-    return payload, metadata
+    return payload, json.dumps(metadata)
 
 
 def decode_mask(result_b64: str, shape_zyx=IMAGE_SHAPE_ZYX) -> np.ndarray:
@@ -69,6 +96,7 @@ class FakeAdpkdClient:
     """
 
     def __init__(self, output_dir: Path, labels=None, statuses=("succeeded",)):
+        self.healthy = True
         self.output_dir = output_dir
         self.labels = make_label_array() if labels is None else labels
         self.statuses = list(statuses)
@@ -79,11 +107,20 @@ class FakeAdpkdClient:
     def job_id(self) -> str:
         return f"job-{len(self.submitted)}"
 
+    async def health(self):
+        return self.healthy
+
     async def submit_job(self, input_path, small=False, cpu=False):
+        # Record the geometry now: the input file is deleted after the run
+        input_exists = Path(input_path).is_file()
+        input_image = sitk.ReadImage(str(input_path)) if input_exists else None
         self.submitted.append(
             {
                 "input_path": Path(input_path),
-                "input_exists": Path(input_path).is_file(),
+                "input_exists": input_exists,
+                "input_spacing": input_image.GetSpacing() if input_image else None,
+                "input_origin": input_image.GetOrigin() if input_image else None,
+                "input_direction": input_image.GetDirection() if input_image else None,
                 "small": small,
                 "cpu": cpu,
             }
