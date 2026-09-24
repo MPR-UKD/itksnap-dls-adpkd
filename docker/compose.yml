@@ -1,0 +1,44 @@
+# ITK-SNAP DLS server with the ADPKD segmentation service.
+#
+# Usage (from the repo root): docker compose -f docker/compose.yml up --build
+# ITK-SNAP then connects to <host>:8911.
+#
+# Checklist when merging the adpkd-net service below:
+#   - service name `adpkd` listening on 9000 (or change ADPKD_URL)
+#   - mounts the same `adpkd-data` volume at /data/adpkd; reads inputs/itksnap/<run>.nii.gz
+#     and writes outputs/<job_id>/seg.nii.gz (absolute paths are exchanged between containers)
+#   - serves GET /health, POST /jobs, GET /jobs/{id} with status "succeeded" / "failed"
+#   - has a healthcheck, then enable `depends_on` on itksnap-dls
+#   - GPU reservation, and at most one job at a time (fit.sh uses a fixed /workspace/temp)
+
+services:
+  itksnap-dls:
+    build:
+      context: ..
+      dockerfile: docker/plugin.Dockerfile
+    ports:
+      - "8911:8911"
+    environment:
+      ADPKD_URL: http://adpkd:9000
+      ADPKD_SHARED_INPUT_DIR: /data/adpkd/inputs/itksnap
+      ADPKD_SHARED_OUTPUT_DIR: /data/adpkd/outputs
+    volumes:
+      - adpkd-data:/data/adpkd # must be mounted at the same path in the adpkd service
+      - models:/models # nnInteractive and SAM2 weights
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    # depends_on:
+    #   adpkd:
+    #     condition: service_healthy
+
+  # adpkd: <merge the adpkd-net service here>
+
+volumes:
+  adpkd-data:
+  models:

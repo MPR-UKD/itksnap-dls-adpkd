@@ -1,0 +1,9 @@
+.venv
+.git
+libs
+tests
+docs
+docker
+**/__pycache__
+*.egg-info
+.env
