@@ -1,10 +1,18 @@
 import uvicorn
 import argparse
+import os
 import socket
 import ipaddress
 from .server import app
 from .segment import global_config
 import torch.cuda
+
+def positive_int(value):
+    """Argparse type for integers >= 1."""
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {value}")
+    return number
 
 def get_args():
     parser = argparse.ArgumentParser(description="ITK-SNAP deep learning segmentation server configuration")
@@ -41,6 +49,14 @@ def get_args():
         help="Torch device to use (default: 'cuda' if available, else 'cpu')"
     )
     
+    # CPU threads for nnInteractive (matters when running without a GPU)
+    parser.add_argument(
+        "--cpu-threads",
+        type=positive_int,
+        default=int(os.environ.get("ITKSNAP_DLS_CPU_THREADS", 2)),
+        help="Number of CPU threads for nnInteractive (default: 2, env ITKSNAP_DLS_CPU_THREADS)"
+    )
+
     # Skip verification
     parser.add_argument("-k", "--insecure", 
                         action="store_true",
@@ -145,6 +161,7 @@ def get_access_urls(host: str, port: int):
 if __name__ == "__main__":
     args = get_args()
     global_config.device = args.device
+    global_config.n_cpu_threads = args.cpu_threads
     global_config.hf_models_path = args.models_path
     global_config.https_verify = not args.insecure
     global_config.https_enabled = not args.no_network
@@ -163,7 +180,6 @@ if __name__ == "__main__":
     if args.ngrok:
         
         # Check if the NGROK_AUTHTOKEN environment variable is set
-        import os
         if 'NGROK_AUTHTOKEN' not in os.environ:
             print('NGROK_AUTHTOKEN environment variable is not set. Please set it to use ngrok.')
             print(' - Sign up for an account: https://dashboard.ngrok.com/signup ')
