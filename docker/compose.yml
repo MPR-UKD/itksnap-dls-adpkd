@@ -1,18 +1,14 @@
-# ITK-SNAP DLS server with the ADPKD segmentation service.
+# ITK-SNAP DLS server with the ADPKD segmentation service (adpkd-net).
 #
+# Setup: copy docker/.env.example to docker/.env and adjust it (see README).
 # Usage (from the repo root):
 #   CPU (any machine): docker compose -f docker/compose.yml up --build
 #   NVIDIA GPU:        docker compose -f docker/compose.yml -f docker/compose.gpu.yml up --build
-# ITK-SNAP then connects to <host>:8911. Tuning variables (ADPKD_RUN_SMALL,
-# ITKSNAP_DLS_CPU_THREADS) can be set in the shell or in docker/.env.
+# ITK-SNAP then connects to <host>:${PORT} (default 8911).
 #
-# Checklist when merging the adpkd-net service below:
-#   - service name `adpkd` listening on 9000 (or change ADPKD_URL)
-#   - mounts the same `adpkd-data` volume at /data/adpkd; reads inputs/itksnap/<run>.nii.gz
-#     and writes outputs/<job_id>/seg.nii.gz (absolute paths are exchanged between containers)
-#   - serves GET /health, POST /jobs, GET /jobs/{id} with status "succeeded" / "failed"
-#   - has a healthcheck, then enable `depends_on` on itksnap-dls
-#   - GPU reservation goes into compose.gpu.yml; at most one job at a time (fit.sh uses a fixed /workspace/temp)
+# Both services mount DATA_DIR at /data, so the absolute paths the plugin sends
+# (/data/adpkd/inputs/itksnap/...) are valid in the adpkd container too. adpkd-net
+# runs one job at a time and is only reachable inside the compose network.
 
 services:
   itksnap-dls:
@@ -29,13 +25,8 @@ services:
       ITKSNAP_DLS_CPU_THREADS: ${ITKSNAP_DLS_CPU_THREADS:-2}
     volumes:
       - ${DATA_DIR:-../data}:/data # must be mounted at the same path in the adpkd service
-      - ${MODELS_DIR:-../models}/itksnap:/models # nnInteractive and SAM2 weights
+      - ${MODELS_DIR:-../models}/itksnap:/models:ro # nnInteractive and SAM2 weights
     restart: unless-stopped
-  # depends_on:
-  #   adpkd:
-  #     condition: service_healthy
-
-  # adpkd: <merge the adpkd-net service here>
 
   adpkd:
     build:
@@ -56,6 +47,6 @@ services:
       # subdirectory of it, so a file the nomiso plugin copies under
       # /data/adpkd/inputs/... is immediately visible here too.
       - ${DATA_DIR:-../data}:/data
-      - ${MODELS_DIR:-../models}/adpkd:/workspace/source/trained_models
+      - ${MODELS_DIR:-../models}/adpkd:/workspace/source/trained_models:ro
 
     restart: unless-stopped
