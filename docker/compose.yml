@@ -25,7 +25,7 @@ services:
       ITKSNAP_DLS_CPU_THREADS: ${ITKSNAP_DLS_CPU_THREADS:-2}
     volumes:
       - ${DATA_DIR:-../data}:/data # must be mounted at the same path in the adpkd service
-      - ${MODELS_DIR:-../models}/itksnap:/models:ro # nnInteractive and SAM2 weights
+      - ${MODELS_DIR:-../models}/itksnap:/models # nnInteractive and SAM2 weights
     restart: unless-stopped
 
   adpkd:
