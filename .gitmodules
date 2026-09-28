@@ -1,3 +1,4 @@
 [submodule "libs/woznicki-adpkd"]
 	path = libs/woznicki-adpkd
 	url = https://github.com/MPR-UKD/woznicki-adpkd
+	branch = http-api
