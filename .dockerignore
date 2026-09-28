@@ -7,3 +7,5 @@ docker
 **/__pycache__
 *.egg-info
 .env
+data
+models

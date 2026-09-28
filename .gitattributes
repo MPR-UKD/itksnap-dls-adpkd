@@ -1,0 +1,17 @@
+# Normalize line endings: text files are stored and checked out with LF on every
+# platform (overrides core.autocrlf), so shell scripts, Dockerfiles, compose and
+# .env files work inside Linux containers.
+* text=auto eol=lf
+
+# Windows batch files need CRLF to run reliably under cmd.exe
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files: never convert
+*.png binary
+*.jpg binary
+*.gz binary
+*.nii binary
+*.npz binary
+*.pkl binary
+*.model binary

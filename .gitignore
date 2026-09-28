@@ -2,3 +2,6 @@
 __pycache__
 docs/_build
 .DS_store
+docker/.env
+data/
+models/
