@@ -30,8 +30,8 @@ data/                     DATA_DIR, mounted at /data in both containers
   adpkd/inputs/itksnap/   images sent for segmentation (deleted after each run)
   adpkd/outputs/<job_id>/ adpkd-net results (seg.nii.gz, results.json)
 models/                   MODELS_DIR
-  itksnap/                nnInteractive and SAM2 weights, downloaded on first use
-  adpkd/                  adpkd-net trained models (see below)
+  itksnap/                nnInteractive and SAM2 weights (see step 4)
+  adpkd/                  adpkd-net trained models (see step 3)
 ```
 
 Both folders are gitignored and excluded from the Docker build. `data/` holds patient images, so keep it out of cloud-synced folders.
@@ -40,7 +40,28 @@ Both folders are gitignored and excluded from the Docker build. `data/` holds pa
 
 Download the `trained_models` folder from the [adpkd-net Google Drive](https://drive.google.com/drive/folders/1D2glVKAKcAdQmmqct964RZoxHCpyDqgc?usp=sharing) and copy its **contents** into `models/adpkd/`, so that `models/adpkd/nnUNet/` and `models/adpkd/preprocessing/` exist. Without them, ADPKD jobs fail; nnInteractive and SAM2 still work.
 
-### 4. Start
+### 4. Download the nnInteractive and SAM2 weights
+
+The compose file mounts `models/itksnap/` read-only, so the server cannot download these weights while it runs. Download them once beforehand with the server's `--setup-only` mode, using a writable mount of the same folder:
+
+```bash
+docker compose -f docker/compose.yml build itksnap-dls
+docker compose -f docker/compose.yml run --rm --no-deps \
+  -v "$PWD/models/itksnap:/models" \
+  itksnap-dls python -m itksnap_dls --setup-only --models-path /models
+```
+
+Run this from the repository root. If `MODELS_DIR` in `docker/.env` is not `../models`, mount `<MODELS_DIR>/itksnap` instead. In PowerShell, write the path as `"${PWD}/models/itksnap:/models"` and put the command on one line (or end lines with a backtick instead of `\`). The download is about 1.3 GB and ends with `SAM Setup complete.` Afterwards the folder contains:
+
+```text
+models/itksnap/
+  nnInteractive_v1.0/     nnInteractive (from MIC-DKFZ/nnInteractive on Hugging Face)
+  hf-cache/hub/models--facebook--sam2.1-hiera-large/   SAM2 (Hugging Face cache, HF_HOME)
+```
+
+On a machine without internet access, run the same command on another machine and copy `models/itksnap/` over. Without these weights, starting an nnInteractive or SAM2 session fails; ADPKD is not affected.
+
+### 5. Start
 
 On any machine (CPU):
 
