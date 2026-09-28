@@ -28,15 +28,34 @@ services:
       ADPKD_RUN_SMALL: ${ADPKD_RUN_SMALL:-false}
       ITKSNAP_DLS_CPU_THREADS: ${ITKSNAP_DLS_CPU_THREADS:-2}
     volumes:
-      - adpkd-data:/data/adpkd # must be mounted at the same path in the adpkd service
-      - models:/models # nnInteractive and SAM2 weights
+      - ${DATA_DIR:-../data}:/data # must be mounted at the same path in the adpkd service
+      - ${MODELS_DIR:-../models}/itksnap:/models # nnInteractive and SAM2 weights
     restart: unless-stopped
-    # depends_on:
-    #   adpkd:
-    #     condition: service_healthy
+  # depends_on:
+  #   adpkd:
+  #     condition: service_healthy
 
   # adpkd: <merge the adpkd-net service here>
 
-volumes:
-  adpkd-data:
-  models:
+  adpkd:
+    build:
+      context: ../libs/woznicki-adpkd
+    image: adpkd-net:latest
+    command:
+      [
+        "python3", "-m", "uvicorn", "api_service:app",
+        "--app-dir", "/workspace/source",
+        "--host", "0.0.0.0", "--port", "9000",
+      ]
+    environment:
+      DATA_ROOT: /data/adpkd
+      SOURCE_DIR: /workspace/source
+      RESULTS_FOLDER: /workspace/source/trained_models
+    volumes:
+      # Same volume nomiso mounts at /data: DATA_ROOT=/data/adpkd is just a
+      # subdirectory of it, so a file the nomiso plugin copies under
+      # /data/adpkd/inputs/... is immediately visible here too.
+      - ${DATA_DIR:-../data}:/data
+      - ${MODELS_DIR:-../models}/adpkd:/workspace/source/trained_models
+
+    restart: unless-stopped

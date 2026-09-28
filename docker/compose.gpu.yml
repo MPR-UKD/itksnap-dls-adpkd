@@ -11,5 +11,11 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-
-  # adpkd:  # add the same deploy block when the adpkd-net service is merged
+  adpkd:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
