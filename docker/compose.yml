@@ -20,7 +20,7 @@ services:
       context: ..
       dockerfile: docker/plugin.Dockerfile
     ports:
-      - "8911:8911"
+      - "${PORT:-8911}:8911"
     environment:
       ADPKD_URL: http://adpkd:9000
       ADPKD_SHARED_INPUT_DIR: /data/adpkd/inputs/itksnap
