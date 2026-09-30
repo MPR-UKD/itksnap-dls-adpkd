@@ -51,11 +51,13 @@ async def adpkd_segmentation(input_image: sitk.Image) -> sitk.Image:
         # 3. Poll until the job is done
         start_time = time.time()
         while True:
-            status = (await client.get_job(job_id))["status"]
+            current = await client.get_job(job_id)
+            status = current["status"]
             if status == "succeeded":
                 break
             if status == "failed":
-                raise RuntimeError(f"ADPKD job {job_id} failed")
+                error = current.get("error") or "no details reported"
+                raise RuntimeError(f"ADPKD job {job_id} failed: {error}")
             if time.time() - start_time > settings.adpkd_timeout:
                 raise RuntimeError(
                     f"ADPKD job {job_id} timed out after {settings.adpkd_timeout} s"
