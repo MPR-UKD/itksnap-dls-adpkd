@@ -122,6 +122,24 @@ class TestAdpkdSegmentationErrors:
         with pytest.raises(RuntimeError, match="failed"):
             await adpkd_segmentation(sample_image)
 
+    @pytest.mark.parametrize(
+        ("reported_error", "expected"),
+        [
+            ("fit.sh finished but produced no seg.nii.gz", "produced no seg.nii.gz"),
+            (None, "no details reported"),
+        ],
+        ids=["with-error", "without-error"],
+    )
+    async def test_failed_job_includes_service_error(
+        self, fake_client, sample_image, reported_error, expected
+    ):
+        """The error text from adpkd-net is passed on in the exception."""
+        fake_client.statuses = ["failed"]
+        fake_client.error = reported_error
+
+        with pytest.raises(RuntimeError, match=expected):
+            await adpkd_segmentation(sample_image)
+
     async def test_timeout_raises(self, fake_client, sample_image, monkeypatch):
         """A job that never finishes raises once the timeout is exceeded."""
         monkeypatch.setenv("ADPKD_TIMEOUT", "0")

@@ -97,6 +97,7 @@ class FakeAdpkdClient:
 
     def __init__(self, output_dir: Path, labels=None, statuses=("succeeded",)):
         self.healthy = True
+        self.error = None  # error text reported for failed jobs
         self.output_dir = output_dir
         self.labels = make_label_array() if labels is None else labels
         self.statuses = list(statuses)
@@ -132,4 +133,7 @@ class FakeAdpkdClient:
         self.polls += 1
         if status == "succeeded" and self.labels is not None:
             write_segmentation(self.output_dir / job_id / "seg.nii.gz", self.labels)
-        return {"job_id": job_id, "status": status}
+        job = {"job_id": job_id, "status": status}
+        if status == "failed":
+            job["error"] = self.error
+        return job
