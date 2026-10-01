@@ -29,8 +29,13 @@ def make_image(
     return image
 
 
+# ITK (x, y, z) indices inside the kidney and liver blocks of make_label_array()
+KIDNEY_INDEX = [0, 1, 1]
+LIVER_INDEX = [3, 1, 1]
+
+
 def make_label_array(shape_zyx=IMAGE_SHAPE_ZYX) -> np.ndarray:
-    """Return a label array with two kidneys (labels 1 and 2), 8 voxels each."""
+    """Return an adpkd-net label array: kidneys (1) and liver (2), 8 voxels each."""
     labels = np.zeros(shape_zyx, dtype=np.uint8)
     labels[1:3, 1:3, 0:2] = 1
     labels[1:3, 1:3, 3:5] = 2

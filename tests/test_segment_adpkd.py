@@ -2,6 +2,7 @@
 
 import asyncio
 
+import numpy as np
 import pytest
 import SimpleITK as sitk
 
@@ -12,7 +13,13 @@ from itksnap_dls.segment import (
     instantiate_model_wrapper,
 )
 
-from .test_toolbox import make_image
+from .test_toolbox import (
+    IMAGE_SHAPE_ZYX,
+    KIDNEY_INDEX,
+    LIVER_INDEX,
+    make_image,
+    make_label_array,
+)
 
 INTERACTIONS = [
     ("add_point_interaction", ([1, 2, 3],)),
@@ -21,11 +28,28 @@ INTERACTIONS = [
 ]
 INTERACTION_IDS = ["point", "scribble", "lasso"]
 
+# ITK (x, y, z) index outside both organs
+BACKGROUND_INDEX = [5, 4, 3]
+
+
+def drawing(zyx_slices) -> sitk.Image:
+    """Return a scribble/lasso mask image that is 1 inside ``zyx_slices``."""
+    array = np.zeros(IMAGE_SHAPE_ZYX, dtype=np.uint8)
+    array[zyx_slices] = 1
+    return sitk.GetImageFromArray(array)
+
+
+def mask_array(image: sitk.Image) -> np.ndarray:
+    """Return the (z, y, x) array of a result mask."""
+    return sitk.GetArrayFromImage(image)
+
 
 @pytest.fixture
 def segmentation_result():
-    """Image returned by the mocked ADPKD pipeline."""
-    return sitk.Image(6, 5, 4, sitk.sitkUInt8)
+    """Image returned by the mocked ADPKD pipeline, with input-like geometry."""
+    seg = sitk.GetImageFromArray(make_label_array())
+    seg.CopyInformation(make_image())
+    return seg
 
 
 @pytest.fixture
@@ -107,7 +131,7 @@ class TestADPKDWrapperSetImage:
         await first_started.wait()
         wrapper.set_image(make_image(shape_zyx=(2, 2, 2)))
 
-        assert await wrapper.get_result() is second_result
+        assert (await wrapper.get_result()).GetSize() == second_result.GetSize()
         assert first_cancelled.is_set()
 
 
@@ -170,13 +194,19 @@ class TestADPKDWrapperResult:
         with pytest.raises(RuntimeError, match="No image"):
             await getattr(ADPKDWrapper(), method)(*args, include_interaction=True)
 
-    async def test_get_result_returns_segmentation(
+    async def test_get_result_without_selection_is_empty(
         self, mock_segmentation, segmentation_result
     ):
-        """get_result returns the pipeline's segmentation."""
+        """Before any interaction, the mask is empty but has the segmentation's geometry."""
         wrapper = ADPKDWrapper()
         wrapper.set_image(make_image())
-        assert await wrapper.get_result() is segmentation_result
+
+        result = await wrapper.get_result()
+
+        assert not mask_array(result).any()
+        assert result.GetSize() == segmentation_result.GetSize()
+        assert result.GetSpacing() == segmentation_result.GetSpacing()
+        assert result.GetOrigin() == segmentation_result.GetOrigin()
 
     @pytest.mark.parametrize(("method", "args"), INTERACTIONS, ids=INTERACTION_IDS)
     @pytest.mark.parametrize("include_interaction", [True, False])
@@ -193,15 +223,15 @@ class TestADPKDWrapperResult:
 
         mock_segmentation.assert_awaited_once()
 
-    async def test_reset_keeps_result(self, mock_segmentation, segmentation_result):
-        """reset_interactions does not rerun the job or drop the result."""
+    async def test_reset_clears_selection_but_keeps_job(self, mock_segmentation):
+        """reset_interactions starts a new selection without rerunning the job."""
         wrapper = ADPKDWrapper()
         wrapper.set_image(make_image())
-        await wrapper.get_result()
+        await wrapper.add_point_interaction(KIDNEY_INDEX, include_interaction=True)
 
         wrapper.reset_interactions()
 
-        assert await wrapper.get_result() is segmentation_result
+        assert not mask_array(await wrapper.get_result()).any()
         mock_segmentation.assert_awaited_once()
 
     async def test_job_failure_propagates(self, mocker):
@@ -216,3 +246,94 @@ class TestADPKDWrapperResult:
 
         with pytest.raises(RuntimeError, match="failed"):
             await wrapper.add_point_interaction([0, 0, 0], include_interaction=True)
+
+
+@pytest.mark.unit
+@pytest.mark.anyio
+class TestADPKDWrapperSelection:
+    """Tests for picking kidneys or liver into the active ITK-SNAP label."""
+
+    @pytest.mark.parametrize(
+        ("index", "label"),
+        [(KIDNEY_INDEX, 1), (LIVER_INDEX, 2)],
+        ids=["kidneys", "liver"],
+    )
+    async def test_point_selects_organ_under_click(
+        self, mock_segmentation, index, label
+    ):
+        """A click on an organ returns exactly that organ's label as the mask."""
+        wrapper = ADPKDWrapper()
+        wrapper.set_image(make_image())
+
+        await wrapper.add_point_interaction(index, include_interaction=True)
+
+        np.testing.assert_array_equal(
+            mask_array(await wrapper.get_result()), make_label_array() == label
+        )
+
+    @pytest.mark.parametrize(
+        "index",
+        [BACKGROUND_INDEX, [6, 0, 0], [-1, 0, 0]],
+        ids=["background", "beyond", "negative"],
+    )
+    async def test_point_off_organ_leaves_selection(self, mock_segmentation, index):
+        """Clicks on background or outside the image select nothing."""
+        wrapper = ADPKDWrapper()
+        wrapper.set_image(make_image())
+
+        await wrapper.add_point_interaction(index, include_interaction=True)
+
+        assert not mask_array(await wrapper.get_result()).any()
+
+    async def test_points_combine_and_right_click_removes(self, mock_segmentation):
+        """Left clicks add organs to the mask; a right click removes one again."""
+        wrapper = ADPKDWrapper()
+        wrapper.set_image(make_image())
+
+        await wrapper.add_point_interaction(KIDNEY_INDEX, include_interaction=True)
+        await wrapper.add_point_interaction(LIVER_INDEX, include_interaction=True)
+        np.testing.assert_array_equal(
+            mask_array(await wrapper.get_result()), make_label_array() > 0
+        )
+
+        await wrapper.add_point_interaction(KIDNEY_INDEX, include_interaction=False)
+        np.testing.assert_array_equal(
+            mask_array(await wrapper.get_result()), make_label_array() == 2
+        )
+
+    @pytest.mark.parametrize(
+        "method", ["add_scribble_interaction", "add_lasso_interaction"]
+    )
+    async def test_drawing_selects_majority_organ(self, mock_segmentation, method):
+        """A drawing selects the organ it covers most, ignoring background voxels."""
+        wrapper = ADPKDWrapper()
+        wrapper.set_image(make_image())
+        # One kidney voxel, two liver voxels and some background
+        drawn = drawing((1, 1, slice(1, 6)))
+
+        await getattr(wrapper, method)(drawn, include_interaction=True)
+
+        np.testing.assert_array_equal(
+            mask_array(await wrapper.get_result()), make_label_array() == 2
+        )
+
+    async def test_drawing_off_organs_leaves_selection(self, mock_segmentation):
+        """A drawing that only covers background selects nothing."""
+        wrapper = ADPKDWrapper()
+        wrapper.set_image(make_image())
+
+        await wrapper.add_scribble_interaction(
+            drawing((3, 4, slice(None))), include_interaction=True
+        )
+
+        assert not mask_array(await wrapper.get_result()).any()
+
+    async def test_new_image_clears_selection(self, mock_segmentation):
+        """Uploading a new image starts with an empty selection."""
+        wrapper = ADPKDWrapper()
+        wrapper.set_image(make_image())
+        await wrapper.add_point_interaction(KIDNEY_INDEX, include_interaction=True)
+
+        wrapper.set_image(make_image())
+
+        assert not mask_array(await wrapper.get_result()).any()

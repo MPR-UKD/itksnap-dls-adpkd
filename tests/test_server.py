@@ -14,12 +14,15 @@ from .test_toolbox import (
     IMAGE_ORIGIN,
     IMAGE_SHAPE_ZYX,
     IMAGE_SPACING,
+    KIDNEY_INDEX,
     decode_mask,
     encode_upload,
     make_label_array,
 )
 
-EXPECTED_MASK = (make_label_array() > 0).astype(np.int8)
+# A left click on a kidney puts the kidney label (1) into the active ITK-SNAP label
+KIDNEY_MASK = (make_label_array() == 1).astype(np.int8)
+EMPTY_MASK = np.zeros_like(KIDNEY_MASK)
 
 
 class SyncFakeWrapper:
@@ -72,9 +75,10 @@ def start_adpkd_session(api_client, **geometry) -> str:
     return session_id
 
 
-def post_image_interaction(api_client, kind, session_id, foreground=True):
-    """POST a scribble or lasso interaction with an empty mask image."""
-    payload, metadata = encode_upload(np.zeros(IMAGE_SHAPE_ZYX))
+def post_image_interaction(api_client, kind, session_id, foreground=True, mask=None):
+    """POST a scribble or lasso interaction; the drawn mask is empty unless given."""
+    drawn = np.zeros(IMAGE_SHAPE_ZYX) if mask is None else mask
+    payload, metadata = encode_upload(drawn)
     return api_client.post(
         f"/process_{kind}_interaction/{session_id}",
         params={"foreground": foreground},
@@ -254,7 +258,7 @@ class TestAdpkdApi:
 
         response = api_client.get(
             f"/v2/process_point_interaction/{session_id}",
-            params={"point": [0, 0, 0], "foreground": True},
+            params={"point": KIDNEY_INDEX, "foreground": True},
         )
 
         submitted = fake_client.submitted[0]
@@ -265,7 +269,7 @@ class TestAdpkdApi:
         np.testing.assert_allclose(submitted["input_spacing"], IMAGE_SPACING, rtol=1e-6)
         np.testing.assert_allclose(submitted["input_origin"], IMAGE_ORIGIN, rtol=1e-6)
         np.testing.assert_array_equal(
-            decode_mask(response.json()["result"]), EXPECTED_MASK
+            decode_mask(response.json()["result"]), KIDNEY_MASK
         )
 
     def test_models_endpoint_lists_adpkd(self, api_client):
@@ -281,21 +285,25 @@ class TestAdpkdApi:
 
         assert len(fake_client.submitted) == 1
 
-    @pytest.mark.parametrize("foreground", [True, False])
-    def test_point_interaction_returns_mask(self, api_client, fake_client, foreground):
-        """A point interaction returns the binarised ADPKD segmentation."""
+    @pytest.mark.parametrize(
+        ("foreground", "expected"),
+        [(True, KIDNEY_MASK), (False, EMPTY_MASK)],
+        ids=["add", "remove"],
+    )
+    def test_point_interaction_returns_mask(
+        self, api_client, fake_client, foreground, expected
+    ):
+        """A click on a kidney adds the kidneys to the mask; a right click removes them."""
         session_id = start_adpkd_session(api_client)
 
         response = api_client.get(
             f"/v2/process_point_interaction/{session_id}",
-            params={"point": [1, 2, 3], "foreground": foreground},
+            params={"point": KIDNEY_INDEX, "foreground": foreground},
         )
 
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "success"
-        np.testing.assert_array_equal(
-            decode_mask(response.json()["result"]), EXPECTED_MASK
-        )
+        np.testing.assert_array_equal(decode_mask(response.json()["result"]), expected)
 
     def test_legacy_point_interaction_returns_mask(self, api_client, fake_client):
         """The legacy x/y/z point endpoint returns the same mask."""
@@ -303,24 +311,26 @@ class TestAdpkdApi:
 
         response = api_client.get(
             f"/process_point_interaction/{session_id}",
-            params={"x": 1, "y": 2, "z": 3, "foreground": True},
+            params={**dict(zip("xyz", KIDNEY_INDEX)), "foreground": True},
         )
 
         assert response.status_code == 200, response.text
         np.testing.assert_array_equal(
-            decode_mask(response.json()["result"]), EXPECTED_MASK
+            decode_mask(response.json()["result"]), KIDNEY_MASK
         )
 
     @pytest.mark.parametrize("kind", ["scribble", "lasso"])
     def test_image_interaction_returns_mask(self, api_client, fake_client, kind):
-        """Scribble and lasso interactions return the ADPKD segmentation."""
+        """A scribble or lasso drawn over a kidney returns the kidneys."""
         session_id = start_adpkd_session(api_client)
 
-        response = post_image_interaction(api_client, kind, session_id)
+        response = post_image_interaction(
+            api_client, kind, session_id, mask=make_label_array() == 1
+        )
 
         assert response.status_code == 200, response.text
         np.testing.assert_array_equal(
-            decode_mask(response.json()["result"]), EXPECTED_MASK
+            decode_mask(response.json()["result"]), KIDNEY_MASK
         )
 
     def test_repeated_interactions_and_reset_submit_one_job(
