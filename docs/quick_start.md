@@ -138,6 +138,13 @@ Press "OK" to close the dialog. You will see a new entry in the server list. If 
 
 If you get a red error message instead, please see troubleshooting below.
 
+## Using ADPKD from ITK-SNAP
+
+* Choose the `ADPKD` model. The kidney and liver segmentation starts as soon as the image is uploaded; the first click waits for it (seconds to minutes, depending on the GPU).
+* Click on an organ with the "AI" paintbrush to put it into the active label: a click on a kidney adds both kidneys, a click on the liver adds the liver. Clicking both with the same label puts both into it.
+* To get kidneys and liver as separate labels, change the active label between the clicks. Changing the label starts a new selection but does not rerun the segmentation.
+* The right mouse button removes the clicked organ from the label. Scribbles and polygons work like a click on the organ they cover most.
+
 ## Using nnInteractive from ITK-SNAP
 
 * Just draw with the "AI" paintbrush. Your scribbles will be converted by **nnInteractive** to 3D segmentations. You can use the left mouse button to label pixels that should belong to the structure of interest, and right mouse button to label pixels that should be removed from the structure. When you change the active label, the **nnInteractive** interaction state is reset -- as if you are starting a new segmentation. 

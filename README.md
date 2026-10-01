@@ -56,6 +56,8 @@ docker compose -f docker/compose.yml -f docker/compose.gpu.yml up --build
 
 Then connect ITK-SNAP to `<host>:8911` (or the `PORT` from `docker/.env`) and choose the `ADPKD` model. The segmentation starts when the image is uploaded; the first interaction waits for it (minutes on the CPU).
 
+ADPKD segments the kidneys (both in one structure) and the liver. Each click picks one of them into the active ITK-SNAP label, so they can go into separate labels: select a label, click on a kidney, then select another label and click on the liver. The right mouse button removes the organ again; scribbles and polygons pick the organ they cover most. All of this reuses the one segmentation per image.
+
 ### GPU
 
 The GPU override needs the host to pass the GPU into containers:
