@@ -10,7 +10,7 @@ import SimpleITK as sitk
 import torch
 from transformers import Sam2Model, Sam2Processor
 
-from .adpkd_seg import adpkd_segmentation
+from .adpkd_seg import ADPKD_LABELS, adpkd_segmentation
 
 
 # Server configuration
@@ -302,6 +302,14 @@ class SAM2Wrapper(ModelWrapper):
 
 
 class ADPKDWrapper(ModelWrapper):
+    """Kidney/liver segmentation by adpkd-net, one structure per ITK-SNAP label.
+
+    ITK-SNAP receives a binary mask for its active label, so the interactions pick
+    which adpkd-net labels the mask shows: clicking (or drawing) on an organ adds its
+    label, the right mouse button removes it. Changing the active label resets the
+    selection; the segmentation itself runs once per uploaded image.
+    """
+
     # Model descriptor
     ID = "ADPKD"
     DIMENSIONS = 3
@@ -313,6 +321,7 @@ class ADPKDWrapper(ModelWrapper):
         self.config = config
         self.input_image = None
         self._task: asyncio.Task | None = None
+        self._selected: set[int] = set()
 
     def set_image(self, sitk_image):
         # Called from the async upload handler, so a loop is running. Start the
@@ -321,6 +330,7 @@ class ADPKDWrapper(ModelWrapper):
         if self._task is not None:
             self._task.cancel()
         self.input_image = sitk_image
+        self._selected = set()
         self._task = asyncio.get_running_loop().create_task(
             adpkd_segmentation(sitk_image)
         )
@@ -330,17 +340,40 @@ class ADPKDWrapper(ModelWrapper):
             raise RuntimeError("No image has been uploaded")
         return await self._task
 
+    def _update_selection(self, label: int, include_interaction: bool):
+        if label not in ADPKD_LABELS:
+            print("ADPKD interaction is not on a segmented organ; selection unchanged")
+            return
+        if include_interaction:
+            self._selected.add(label)
+        else:
+            self._selected.discard(label)
+        print(
+            f"ADPKD selection: {sorted(ADPKD_LABELS[value] for value in self._selected)}"
+        )
+
+    async def _select_under_mask(self, sitk_image, include_interaction):
+        seg_arr = sitk.GetArrayFromImage(await self._wait_for_result())
+        mask_arr = sitk.GetArrayFromImage(sitk_image)
+        labels = seg_arr[(mask_arr > 0) & (seg_arr > 0)]
+        # The organ covered most by the drawing, or none if it misses all organs
+        label = int(np.bincount(labels).argmax()) if labels.size else 0
+        self._update_selection(label, include_interaction)
+
     async def add_point_interaction(self, index_itk, include_interaction):
         print(f"ADPKD point interaction: {index_itk}, foreground={include_interaction}")
-        await self._wait_for_result()
+        seg = await self._wait_for_result()
+        inside = all(0 <= i < n for i, n in zip(index_itk, seg.GetSize()))
+        label = int(seg.GetPixel([int(i) for i in index_itk])) if inside else 0
+        self._update_selection(label, include_interaction)
 
     async def add_scribble_interaction(self, sitk_image, include_interaction):
         print(f"ADPKD scribble interaction: foreground={include_interaction}")
-        await self._wait_for_result()
+        await self._select_under_mask(sitk_image, include_interaction)
 
     async def add_lasso_interaction(self, sitk_image, include_interaction):
         print(f"ADPKD lasso interaction: foreground={include_interaction}")
-        await self._wait_for_result()
+        await self._select_under_mask(sitk_image, include_interaction)
 
     def close(self):
         # Stop waiting for the job when the session ends. The container job itself
@@ -350,12 +383,16 @@ class ADPKDWrapper(ModelWrapper):
             self._task = None
 
     def reset_interactions(self):
-        # Interactions do not modify the result, so the cached segmentation is
-        # kept instead of re-running the full job.
-        pass
+        # Called when the active label changes: start a new selection, but keep the
+        # cached segmentation instead of re-running the full job.
+        self._selected = set()
 
     async def get_result(self):
-        return await self._wait_for_result()
+        seg = await self._wait_for_result()
+        mask_arr = np.isin(sitk.GetArrayFromImage(seg), list(self._selected))
+        mask = sitk.GetImageFromArray(mask_arr.astype(np.uint8))
+        mask.CopyInformation(seg)
+        return mask
 
 
 def get_model_listing():

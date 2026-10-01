@@ -7,6 +7,10 @@ import SimpleITK as sitk
 from .adpkd_client import AdpkdClient
 from .settings import get_plugin_settings
 
+# Label values adpkd-net writes into seg.nii.gz (see postprocess_masks.py in
+# libs/woznicki-adpkd); both kidneys share one label.
+ADPKD_LABELS: dict[int, str] = {1: "kidneys", 2: "liver"}
+
 
 async def adpkd_segmentation(input_image: sitk.Image) -> sitk.Image:
     """Run the adpkd-net container on an image and return the segmentation.
