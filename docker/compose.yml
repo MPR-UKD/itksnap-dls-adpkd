@@ -47,6 +47,6 @@ services:
       # subdirectory of it, so a file the nomiso plugin copies under
       # /data/adpkd/inputs/... is immediately visible here too.
       - ${DATA_DIR:-../data}:/data
-      - ${MODELS_DIR:-../models}/adpkd:/workspace/source/trained_models:ro
+      - ${MODELS_DIR:-../models}/adpkd:/workspace/source/trained_models
 
     restart: unless-stopped
