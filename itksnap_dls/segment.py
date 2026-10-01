@@ -105,15 +105,26 @@ class nnInteractiveWrapper(ModelWrapper):
         # Set it as the default session factory - to allow -k flag
         config_hf_backend()
 
-        # Download the model, optionally
-        self.model_path = hf.snapshot_download(
-            repo_id=self.HF_REPO_ID,
-            allow_patterns=[f"{self.HF_MODEL_NAME}/*"],
-            local_dir=config.hf_models_path,
+        # Use a model that was placed in the models path manually (e.g. on a
+        # read-only mount), otherwise download it
+        local_model_path = (
+            os.path.join(config.hf_models_path, self.HF_MODEL_NAME)
+            if config.hf_models_path
+            else None
         )
+        if local_model_path and os.path.isfile(
+            os.path.join(local_model_path, "fold_0", "checkpoint_final.pth")
+        ):
+            self.model_path = local_model_path
+        else:
+            self.model_path = hf.snapshot_download(
+                repo_id=self.HF_REPO_ID,
+                allow_patterns=[f"{self.HF_MODEL_NAME}/*"],
+                local_dir=config.hf_models_path,
+            )
 
-        # Append the model name
-        self.model_path = os.path.join(self.model_path, self.HF_MODEL_NAME)
+            # Append the model name
+            self.model_path = os.path.join(self.model_path, self.HF_MODEL_NAME)
 
         # Print where the model was downloaded to
         print(f"nnInteractive model available in {self.model_path}")

@@ -76,7 +76,21 @@ addresses, and starts Uvicorn.
 | `--setup-only`         | off                                | Download models and exit without serving              |
 
 `--setup-only` exists so that a machine can pre-fetch weights during provisioning rather
-than on a user's first click.
+than on a user's first click. It downloads both models to different places:
+
+* nnInteractive goes to `<models-path>/nnInteractive_v1.0/`. If
+  `fold_0/checkpoint_final.pth` already exists there, the server uses that folder without
+  contacting Hugging Face, so the folder can be mounted read-only.
+* SAM2 is loaded by `transformers` and ignores `--models-path`. It goes to the Hugging Face
+  cache (`$HF_HOME/hub`, by default `~/.cache/huggingface/hub`). The Docker image sets
+  `HF_HOME=/models/hf-cache`, so both models end up under the mounted `/models`.
+
+```bash
+python -m itksnap_dls --setup-only --models-path ./models   # nnInteractive -> ./models
+HF_HOME=./models/hf-cache python -m itksnap_dls --setup-only --models-path ./models   # SAM2 too
+```
+
+For Docker, see "Download the nnInteractive and SAM2 weights" in the README.
 
 ### `segment.py` — configuration and models
 
