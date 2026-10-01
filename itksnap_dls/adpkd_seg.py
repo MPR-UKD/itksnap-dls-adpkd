@@ -2,6 +2,7 @@ import asyncio
 import time
 import uuid
 
+import numpy as np
 import SimpleITK as sitk
 
 from .adpkd_client import AdpkdClient
@@ -57,25 +58,50 @@ async def adpkd_segmentation(input_image: sitk.Image) -> sitk.Image:
                 break
             if status == "failed":
                 error = current.get("error") or "no details reported"
-                raise RuntimeError(f"ADPKD job {job_id} failed: {error}")
+                raise RuntimeError(f"[ADPKD] Job {job_id} failed: {error}")
             if time.time() - start_time > settings.adpkd_timeout:
                 raise RuntimeError(
-                    f"ADPKD job {job_id} timed out after {settings.adpkd_timeout} s"
+                    f"[ADPKD] Job {job_id} timed out after {settings.adpkd_timeout} s"
                 )
             await asyncio.sleep(settings.adpkd_poll_interval)
         print(f"[ADPKD] Job succeeded in {time.time() - start_time:.1f} seconds")
 
         # 4. Read the result and map it onto the input geometry
-        seg_path = settings.adpkd_shared_output_dir / job_id / "seg.nii.gz"
-        if not seg_path.is_file():
-            raise RuntimeError(f"ADPKD result not found: {seg_path}")
-        seg = sitk.ReadImage(str(seg_path))
-        if seg.GetSize() != input_image.GetSize():
-            raise RuntimeError(
-                f"ADPKD result size {seg.GetSize()} does not match "
-                f"input size {input_image.GetSize()}"
-            )
-        seg = sitk.Cast(seg, sitk.sitkUInt8)
+        ## Return both kidneys (label=1) combined and if available liver (label=2)
+        # seg_path = settings.adpkd_shared_output_dir / job_id / "seg.nii.gz"
+        # if not seg_path.is_file():
+        #     raise RuntimeError(f"ADPKD result not found: {seg_path}")
+        # seg = sitk.ReadImage(str(seg_path))
+        # if seg.GetSize() != input_image.GetSize():
+        #     raise RuntimeError(
+        #         f"ADPKD result size {seg.GetSize()} does not match "
+        #         f"input size {input_image.GetSize()}"
+        #     )
+        #
+        # seg = sitk.Cast(seg, sitk.sitkUInt8)
+        ## Create new image with combined kidneys (labels=(1,2)) and liver (label=3) (if available)
+        #
+        ORGAN_LABELS = {"right_kidney": 1, "left_kidney": 2, "liver": 3}
+        job_dir = settings.adpkd_shared_output_dir / job_id
+        # Get Niftis
+        seg_arr = np.zeros(sitk.GetArrayFromImage(input_image).shape, dtype=np.uint8)
+        organs_found = []
+        for organ, label in ORGAN_LABELS.items():
+            seg_path = job_dir / f"{organ}.nii.gz"
+            if not seg_path.is_file():
+                continue  # Skip files not found
+            temp_seg = sitk.ReadImage(str(seg_path))
+            if temp_seg.GetSize() != input_image.GetSize():
+                raise RuntimeError(
+                    f"[ADPKD] Result size {temp_seg.GetSize()} does not match "
+                    f"input size {input_image.GetSize()}"
+                )
+            seg_arr[sitk.GetArrayViewFromImage(temp_seg) > 0] = label
+            organs_found.append(organ)
+        if not organs_found:
+            raise RuntimeError(f"[ADPKD] No organ segments found for job {job_id}")
+        print(f"[ADPKD] Combined organs: {', '.join(organs_found)}")
+        seg = sitk.GetImageFromArray(seg_arr)
         seg.CopyInformation(input_image)
         return seg
 
